@@ -169,22 +169,31 @@ except Exception:
         resource_name=aks_name,  # Explicitly set the AKS cluster name
     )
 
-# ---------------------------
-# Role Assignment: AKS → ACR Pull
-# ---------------------------
-acr_pull_role_assignment = azure_native.authorization.RoleAssignment(
-    "aksAcrPullRole",
-    principal_id=aks_cluster.identity.apply(lambda id: id.principal_id),
-    principal_type="ServicePrincipal",
-    role_definition_id=client_config.subscription_id.apply(
-        lambda sid: f"/subscriptions/{sid}/providers/Microsoft.Authorization/roleDefinitions/7f951dda-4ed3-4680-a7ca-43fe172d538d"
-    ),
-    scope=pulumi.Output.concat(
-        "/subscriptions/", client_config.subscription_id,
-        "/resourceGroups/", rg_name,
-        "/providers/Microsoft.ContainerRegistry/registries/", acr_name
-    ),
-)
+# --------------------------------
+# Role Assignment: AKS → ACR Pull 
+# --------------------------------
+def create_role_assignment(principal_id):
+    if principal_id is not None:
+        return azure_native.authorization.RoleAssignment(
+            "aksAcrPullRole",
+            principal_id=principal_id,
+            principal_type="ServicePrincipal",
+            role_definition_id=client_config.subscription_id.apply(
+                lambda sid: f"/subscriptions/{sid}/providers/Microsoft.Authorization/roleDefinitions/7f951dda-4ed3-4680-a7ca-43fe172d538d"
+            ),
+            scope=pulumi.Output.concat(
+                "/subscriptions/", client_config.subscription_id,
+                "/resourceGroups/", rg_name,
+                "/providers/Microsoft.ContainerRegistry/registries/", acr_name
+            ),
+        )
+    else:
+        pulumi.log.warn("AKS cluster has no identity; skipping RoleAssignment")
+        return None
+
+# Apply safe RoleAssignment
+aks_cluster_identity = aks_cluster.identity.apply(lambda id: id.principal_id if id is not None else None)
+role_assignment = aks_cluster_identity.apply(create_role_assignment)
 
 # ---------------------------
 # Exports
