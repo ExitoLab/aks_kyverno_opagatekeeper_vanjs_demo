@@ -2,6 +2,7 @@ import pulumi
 import pulumi_azure_native as azure_native
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
+from pulumi import Output
 
 config = pulumi.Config()
 project = pulumi.get_project()
@@ -35,20 +36,33 @@ acr = azure_native.containerregistry.Registry(
 )
 
 # ---------------------------
-# Key Vault
+# Key Vault (create only if not exists)
 # ---------------------------
 kv_name = f"{name_prefix}-kv".lower()[:24]
-key_vault = azure_native.keyvault.Vault(
-    "kv",
-    resource_group_name=resource_group.name,
-    location=location,
-    properties=azure_native.keyvault.VaultPropertiesArgs(
-        sku=azure_native.keyvault.SkuArgs(family="A", name="standard"),
-        tenant_id=client_config.tenant_id,
-        enable_rbac_authorization=True,
-    ),
-    vault_name=kv_name
-)
+
+def create_or_get_kv(args):
+    rg_name, kv_name = args
+    try:
+        # Try to fetch existing vault
+        return azure_native.keyvault.get_vault_output(
+            resource_group_name=rg_name,
+            vault_name=kv_name
+        )
+    except Exception:
+        # Vault doesn't exist, create new
+        return azure_native.keyvault.Vault(
+            "kv",
+            resource_group_name=rg_name,
+            location=location,
+            properties=azure_native.keyvault.VaultPropertiesArgs(
+                sku=azure_native.keyvault.SkuArgs(family="A", name="standard"),
+                tenant_id=client_config.tenant_id,
+                enable_rbac_authorization=True,
+            ),
+            vault_name=kv_name
+        )
+
+key_vault = Output.all(resource_group.name, kv_name).apply(create_or_get_kv)
 
 # ---------------------------
 # RSA Key
@@ -63,14 +77,13 @@ public_pem = private_key.public_key().public_bytes(
 # Key Vault Secret (depends on vault)
 # ---------------------------
 secret_name = "aks-ssh-public-key"
-ssh_secret = azure_native.keyvault.Secret(
+ssh_secret = key_vault.apply(lambda kv: azure_native.keyvault.Secret(
     "sshSecret",
     resource_group_name=resource_group.name,
-    vault_name=key_vault.name,  # depend on vault output
+    vault_name=kv.name,
     properties=azure_native.keyvault.SecretPropertiesArgs(value=public_pem),
-    secret_name=secret_name,
-    opts=pulumi.ResourceOptions(depends_on=[key_vault])  # ensure vault exists first
-)
+    secret_name=secret_name
+))
 
 # ---------------------------
 # AKS Cluster
