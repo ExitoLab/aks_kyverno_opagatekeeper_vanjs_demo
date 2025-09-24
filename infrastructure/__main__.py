@@ -11,9 +11,7 @@ name_prefix = f"{project}-{env}"
 
 client_config = azure_native.authorization.get_client_config_output()
 
-# ---------------------------
 # Resource Group
-# ---------------------------
 rg_name = f"{name_prefix}-rg"
 resource_group = azure_native.resources.ResourceGroup(
     "rg",
@@ -21,9 +19,7 @@ resource_group = azure_native.resources.ResourceGroup(
     location=location
 )
 
-# ---------------------------
 # ACR
-# ---------------------------
 acr_name = f"{name_prefix}acr".lower().replace("-", "").replace("_", "")
 acr = azure_native.containerregistry.Registry(
     "acr",
@@ -34,49 +30,29 @@ acr = azure_native.containerregistry.Registry(
     registry_name=acr_name
 )
 
-# ---------------------------
-# Key Vault
-# ---------------------------
+# Key Vault — always create (idempotent if already exists via same name)
 kv_name = f"{name_prefix}-kv".lower()[:24]
-
-# Attempt to get existing Key Vault
-existing_kv = azure_native.keyvault.get_vault_output(
+key_vault = azure_native.keyvault.Vault(
+    "kv",
     resource_group_name=resource_group.name,
+    location=location,
+    properties=azure_native.keyvault.VaultPropertiesArgs(
+        sku=azure_native.keyvault.SkuArgs(family="A", name="standard"),
+        tenant_id=client_config.tenant_id,
+        enable_rbac_authorization=True,
+    ),
     vault_name=kv_name
 )
 
-# Use Output.apply to conditionally create if not exists
-def create_kv_or_use_existing(kv):
-    if kv.id is not None:
-        return kv
-    return azure_native.keyvault.Vault(
-        "kv",
-        resource_group_name=resource_group.name,
-        location=location,
-        properties=azure_native.keyvault.VaultPropertiesArgs(
-            sku=azure_native.keyvault.SkuArgs(family="A", name="standard"),
-            tenant_id=client_config.tenant_id,
-            enable_rbac_authorization=True,
-        ),
-        vault_name=kv_name
-    )
-
-key_vault = pulumi.Output.from_input(existing_kv).apply(create_kv_or_use_existing)
-
-# ---------------------------
 # RSA Key
-# ---------------------------
 private_key = rsa.generate_private_key(public_exponent=65537, key_size=4096)
 public_pem = private_key.public_key().public_bytes(
     encoding=serialization.Encoding.OpenSSH,
     format=serialization.PublicFormat.OpenSSH
 ).decode()
 
-# ---------------------------
 # Key Vault Secret
-# ---------------------------
 secret_name = "aks-ssh-public-key"
-
 ssh_secret = azure_native.keyvault.Secret(
     "sshSecret",
     resource_group_name=resource_group.name,
@@ -86,61 +62,45 @@ ssh_secret = azure_native.keyvault.Secret(
     opts=pulumi.ResourceOptions(depends_on=[key_vault])
 )
 
-# ---------------------------
-# AKS Cluster
-# ---------------------------
+# AKS Cluster — fixed Azure name
 aks_name = f"{name_prefix}-aks"
-
-# Use get_managed_cluster_output and Output.apply to avoid 404
-def create_aks_or_use_existing(aks):
-    if aks.id is not None:
-        return aks
-    return azure_native.containerservice.ManagedCluster(
-        "aks",
-        resource_group_name=resource_group.name,
-        resource_name=aks_name,  # Explicit Azure AKS name
-        location=location,
-        dns_prefix=f"{name_prefix}-dns",
-        kubernetes_version="1.33.3",
-        enable_rbac=True,
-        identity=azure_native.containerservice.ManagedClusterIdentityArgs(
-            type="SystemAssigned"
-        ),
-        agent_pool_profiles=[
-            azure_native.containerservice.ManagedClusterAgentPoolProfileArgs(
-                name="systempool",
-                mode="System",
-                count=1,
-                vm_size="Standard_B2ms",
-                os_type="Linux",
-                os_disk_size_gb=30,
-                type="VirtualMachineScaleSets",
-                enable_auto_scaling=False,
-            ),
-        ],
-        linux_profile=azure_native.containerservice.ContainerServiceLinuxProfileArgs(
-            admin_username="aksadmin",
-            ssh=azure_native.containerservice.ContainerServiceSshConfigurationArgs(
-                public_keys=[azure_native.containerservice.ContainerServiceSshPublicKeyArgs(key_data=public_pem)]
-            )
-        ),
-        network_profile=azure_native.containerservice.ContainerServiceNetworkProfileArgs(
-            network_plugin="azure",
-            load_balancer_sku="standard",
-            outbound_type="loadBalancer",
-        ),
-    )
-
-existing_aks = azure_native.containerservice.get_managed_cluster_output(
+aks_cluster = azure_native.containerservice.ManagedCluster(
+    "aks",
     resource_group_name=resource_group.name,
-    resource_name=aks_name
+    resource_name=aks_name,  # Azure-visible name
+    location=location,
+    dns_prefix=f"{name_prefix}-dns",
+    kubernetes_version="1.33.3",
+    enable_rbac=True,
+    identity=azure_native.containerservice.ManagedClusterIdentityArgs(
+        type="SystemAssigned"
+    ),
+    agent_pool_profiles=[
+        azure_native.containerservice.ManagedClusterAgentPoolProfileArgs(
+            name="systempool",
+            mode="System",
+            count=1,
+            vm_size="Standard_B2ms",
+            os_type="Linux",
+            os_disk_size_gb=30,
+            type="VirtualMachineScaleSets",
+            enable_auto_scaling=False,
+        ),
+    ],
+    linux_profile=azure_native.containerservice.ContainerServiceLinuxProfileArgs(
+        admin_username="aksadmin",
+        ssh=azure_native.containerservice.ContainerServiceSshConfigurationArgs(
+            public_keys=[azure_native.containerservice.ContainerServiceSshPublicKeyArgs(key_data=public_pem)]
+        )
+    ),
+    network_profile=azure_native.containerservice.ContainerServiceNetworkProfileArgs(
+        network_plugin="azure",
+        load_balancer_sku="standard",
+        outbound_type="loadBalancer",
+    ),
 )
 
-aks_cluster = pulumi.Output.from_input(existing_aks).apply(create_aks_or_use_existing)
-
-# ---------------------------
 # Exports
-# ---------------------------
 pulumi.export("resource_group", resource_group.name)
 pulumi.export("acr_name", acr_name)
 pulumi.export("key_vault_name", kv_name)
