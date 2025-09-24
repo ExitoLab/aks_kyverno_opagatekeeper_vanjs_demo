@@ -1,0 +1,65 @@
+name: Deploy AKS with Pulumi
+
+on:
+  push:
+    paths:
+      - 'infrastructure/**'
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install Pulumi CLI
+        uses: pulumi/actions@v5
+        with:
+          command: version
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+        working-directory: infrastructure
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Pulumi Preview
+        uses: pulumi/actions@v5
+        with:
+          command: preview
+          stack-name: shared-eks/prod
+          work-dir: infrastructure
+        env:
+          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+
+      - name: Pulumi Up
+        uses: pulumi/actions@v5
+        with:
+          command: up
+          stack-name: shared-eks/prod
+          work-dir: infrastructure
+          args: --yes
+        env:
+          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+
+
+      - name: Pulumi Destroy
+        uses: pulumi/actions@v5
+        with:
+          command: destroy
+          stack-name: shared-eks/prod
+          work-dir: infrastructure
+          args: --yes
+        env:
+          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}

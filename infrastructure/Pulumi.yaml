@@ -1,0 +1,7 @@
+name: aks-shared-services
+runtime:
+  name: python
+description: Production-ready AKS + ACR deployment for shared services using Pulumi
+config:
+  azure:location: eastus2
+  azure:env: prod
