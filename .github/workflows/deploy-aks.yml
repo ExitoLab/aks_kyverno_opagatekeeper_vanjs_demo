@@ -21,9 +21,9 @@ jobs:
           python-version: "3.11"
 
       - name: Install Pulumi CLI
-        uses: pulumi/actions@v5
+        uses: pulumi/setup-pulumi@v3
         with:
-          command: version
+          pulumi-version: "latest"
 
       - name: Install dependencies
         run: pip install -r requirements.txt
