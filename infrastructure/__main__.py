@@ -2,7 +2,6 @@ import pulumi
 import pulumi_azure_native as azure_native
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from pulumi import Output
 
 config = pulumi.Config()
 project = pulumi.get_project()
@@ -12,9 +11,7 @@ name_prefix = f"{project}-{env}"
 
 client_config = azure_native.authorization.get_client_config_output()
 
-# ---------------------------
 # Resource Group
-# ---------------------------
 rg_name = f"{name_prefix}-rg"
 resource_group = azure_native.resources.ResourceGroup(
     "rg",
@@ -22,9 +19,7 @@ resource_group = azure_native.resources.ResourceGroup(
     location=location
 )
 
-# ---------------------------
-# Azure Container Registry
-# ---------------------------
+# ACR
 acr_name = f"{name_prefix}acr".lower().replace("-", "").replace("_", "")
 acr = azure_native.containerregistry.Registry(
     "acr",
@@ -35,21 +30,15 @@ acr = azure_native.containerregistry.Registry(
     registry_name=acr_name
 )
 
-# ---------------------------
-# Key Vault (create only if not exists)
-# ---------------------------
+# Key Vault
 kv_name = f"{name_prefix}-kv".lower()[:24]
 
-def create_or_get_kv(args):
-    rg_name, kv_name = args
+# Instead of creating blindly, we rely on "ignore_if_exists" pattern:
+# Pulumi doesn't have built-in conditional creation, but we can handle exceptions via get
+def create_or_get_kv(rg_name, kv_name):
     try:
-        # Try to fetch existing vault
-        return azure_native.keyvault.get_vault_output(
-            resource_group_name=rg_name,
-            vault_name=kv_name
-        )
-    except Exception:
-        # Vault doesn't exist, create new
+        return azure_native.keyvault.get_vault_output(resource_group_name=rg_name, vault_name=kv_name)
+    except:
         return azure_native.keyvault.Vault(
             "kv",
             resource_group_name=rg_name,
@@ -62,44 +51,36 @@ def create_or_get_kv(args):
             vault_name=kv_name
         )
 
-key_vault = Output.all(resource_group.name, kv_name).apply(create_or_get_kv)
+key_vault = create_or_get_kv(resource_group.name, kv_name)
 
-# ---------------------------
 # RSA Key
-# ---------------------------
 private_key = rsa.generate_private_key(public_exponent=65537, key_size=4096)
 public_pem = private_key.public_key().public_bytes(
     encoding=serialization.Encoding.OpenSSH,
     format=serialization.PublicFormat.OpenSSH
 ).decode()
 
-# ---------------------------
-# Key Vault Secret (depends on vault)
-# ---------------------------
+# Key Vault Secret
 secret_name = "aks-ssh-public-key"
-ssh_secret = key_vault.apply(lambda kv: azure_native.keyvault.Secret(
+ssh_secret = azure_native.keyvault.Secret(
     "sshSecret",
     resource_group_name=resource_group.name,
-    vault_name=kv.name,
+    vault_name=key_vault.name,
     properties=azure_native.keyvault.SecretPropertiesArgs(value=public_pem),
-    secret_name=secret_name
-))
+    secret_name=secret_name,
+    opts=pulumi.ResourceOptions(depends_on=[key_vault])
+)
 
-# ---------------------------
-# AKS Cluster (create only if not exists)
-# ---------------------------
+# AKS Cluster
 aks_name = f"{name_prefix}-aks"
 
-def create_or_get_aks(args):
-    rg_name, aks_name = args
+def create_or_get_aks(rg_name, aks_name):
     try:
-        # Try to get existing AKS cluster
         return azure_native.containerservice.get_managed_cluster_output(
             resource_group_name=rg_name,
             resource_name=aks_name
         )
-    except Exception:
-        # Cluster doesn't exist, create a new one
+    except:
         return azure_native.containerservice.ManagedCluster(
             "aks",
             resource_group_name=rg_name,
@@ -135,11 +116,9 @@ def create_or_get_aks(args):
             ),
         )
 
-aks_cluster = Output.all(resource_group.name, aks_name).apply(create_or_get_aks)
+aks_cluster = create_or_get_aks(resource_group.name, aks_name)
 
-# ---------------------------
 # Exports
-# ---------------------------
 pulumi.export("resource_group", resource_group.name)
 pulumi.export("acr_name", acr_name)
 pulumi.export("key_vault_name", kv_name)
