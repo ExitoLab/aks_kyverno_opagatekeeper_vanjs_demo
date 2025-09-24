@@ -23,7 +23,10 @@ def get_or_create_rg(name, location):
     """Adopt existing RG or create new one."""
     try:
         # Attempt to adopt the existing resource group
-        return azure_native.resources.ResourceGroup.get("rg", name)
+        return azure_native.resources.ResourceGroup.get(
+            "rg", 
+            id=f"/subscriptions/{azure_native.authorization.get_client_config().subscription_id}/resourceGroups/{name}"
+        )
     except Exception:
         # If it doesn't exist, create it
         return azure_native.resources.ResourceGroup(
@@ -41,7 +44,10 @@ acr_name = f"{name_prefix}acr".lower().replace("-", "").replace("_", "")
 
 def get_or_create_acr(name, rg_name, location):
     try:
-        return azure_native.containerregistry.Registry.get("acr", name)
+        return azure_native.containerregistry.Registry.get(
+            "acr", 
+            id=f"/subscriptions/{azure_native.authorization.get_client_config().subscription_id}/resourceGroups/{rg_name}/providers/Microsoft.ContainerRegistry/registries/{name}"
+        )
     except Exception:
         return azure_native.containerregistry.Registry(
             "acr",
@@ -62,7 +68,10 @@ kv_name = f"{name_prefix}-kv".lower().replace("_", "")[:24]
 
 def get_or_create_kv(name, rg_name, location, tenant_id):
     try:
-        return azure_native.keyvault.Vault.get("kv", name)
+        return azure_native.keyvault.Vault.get(
+            "kv", 
+            id=f"/subscriptions/{azure_native.authorization.get_client_config().subscription_id}/resourceGroups/{rg_name}/providers/Microsoft.KeyVault/vaults/{name}"
+        )
     except Exception:
         return azure_native.keyvault.Vault(
             "kv",
@@ -106,7 +115,7 @@ def get_or_create_secret(kv_name, rg_name, secret_name, public_pem):
     try:
         return azure_native.keyvault.Secret.get(
             "sshPublicKeySecretVault",
-            f"{kv_name}/{secret_name}"
+            id=f"/subscriptions/{azure_native.authorization.get_client_config().subscription_id}/resourceGroups/{rg_name}/providers/Microsoft.KeyVault/vaults/{kv_name}/secrets/{secret_name}"
         )
     except Exception:
         return azure_native.keyvault.Secret(
@@ -127,16 +136,19 @@ ssh_public_key_secret = get_or_create_secret(kv_name, resource_group.name, secre
 aks_name = f"{name_prefix}-aks"
 
 try:
-    aks_cluster = azure_native.containerservice.ManagedCluster.get("aks", aks_name)
-    print(f"Found existing AKS cluster: {aks_name}")
+    aks_cluster = azure_native.containerservice.ManagedCluster.get(
+        "aks", 
+        id=f"/subscriptions/{azure_native.authorization.get_client_config().subscription_id}/resourceGroups/{rg_name}/providers/Microsoft.ContainerService/managedClusters/{aks_name}"
+    )
+    pulumi.log.info(f"Found existing AKS cluster: {aks_name}")
 except Exception:
-    print(f"Creating new AKS cluster: {aks_name}")
+    pulumi.log.info(f"Creating new AKS cluster: {aks_name}")
     aks_cluster = azure_native.containerservice.ManagedCluster(
         "aks",
         resource_group_name=resource_group.name,
         location=location,
         dns_prefix=f"{name_prefix}-dns",
-        kubernetes_version="1.33.2",
+        kubernetes_version="1.29.9",  # Fixed: 1.33.2 doesn't exist
         enable_rbac=True,
         api_server_access_profile=azure_native.containerservice.ManagedClusterAPIServerAccessProfileArgs(
             enable_private_cluster=True,
@@ -187,27 +199,49 @@ except Exception:
 # ---------------------------
 # Role Assignment: AKS → ACR Pull
 # ---------------------------
-def create_role_assignment(principal_id):
-    if principal_id is not None:
-        return azure_native.authorization.RoleAssignment(
-            "aksAcrPullRole",
-            principal_id=principal_id,
-            principal_type="ServicePrincipal",
-            role_definition_id=client_config.subscription_id.apply(
-                lambda sid: f"/subscriptions/{sid}/providers/Microsoft.Authorization/roleDefinitions/7f951dda-4ed3-4680-a7ca-43fe172d538d"
-            ),
-            scope=pulumi.Output.concat(
-                "/subscriptions/", client_config.subscription_id,
-                "/resourceGroups/", resource_group.name,
-                "/providers/Microsoft.ContainerRegistry/registries/", acr_name
-            ),
-        )
-    else:
-        pulumi.log.warn("AKS cluster has no identity; skipping RoleAssignment")
-        return None
+def create_role_assignment_if_identity_exists():
+    def create_assignment(identity):
+        if identity and hasattr(identity, 'principal_id') and identity.principal_id:
+            return azure_native.authorization.RoleAssignment(
+                "aksAcrPullRole",
+                principal_id=identity.principal_id,
+                principal_type="ServicePrincipal",
+                role_definition_id=client_config.subscription_id.apply(
+                    lambda sid: f"/subscriptions/{sid}/providers/Microsoft.Authorization/roleDefinitions/7f951dda-4ed3-4680-a7ca-43fe172d538d"
+                ),
+                scope=client_config.subscription_id.apply(
+                    lambda sid: f"/subscriptions/{sid}/resourceGroups/{rg_name}/providers/Microsoft.ContainerRegistry/registries/{acr_name}"
+                ),
+            )
+        else:
+            pulumi.log.warn("AKS cluster has no identity; skipping RoleAssignment")
+            return None
+    
+    return aks_cluster.identity.apply(create_assignment)
 
-aks_cluster_identity = aks_cluster.identity.apply(lambda id: id.principal_id if id is not None else None)
-role_assignment = aks_cluster_identity.apply(create_role_assignment)
+role_assignment = create_role_assignment_if_identity_exists()
+
+# ---------------------------
+# Conditional Kubeconfig Export
+# ---------------------------
+def get_kubeconfig_safely():
+    def fetch_kubeconfig(cluster_name, rg_name):
+        try:
+            if cluster_name and rg_name:
+                return azure_native.containerservice.list_managed_cluster_user_credentials_output(
+                    resource_group_name=rg_name,
+                    resource_name=cluster_name,
+                ).kubeconfigs[0].value
+            else:
+                pulumi.log.warn("Cannot fetch kubeconfig: missing cluster or resource group name")
+                return "kubeconfig-not-available"
+        except Exception as e:
+            pulumi.log.warn(f"Failed to fetch kubeconfig: {e}")
+            return "kubeconfig-not-available"
+    
+    return pulumi.Output.all(aks_cluster.name, resource_group.name).apply(
+        lambda args: fetch_kubeconfig(args[0], args[1])
+    )
 
 # ---------------------------
 # Exports
@@ -215,14 +249,6 @@ role_assignment = aks_cluster_identity.apply(create_role_assignment)
 pulumi.export("resource_group", resource_group.name)
 pulumi.export("acr_name", acr_name)
 pulumi.export("aks_name", aks_cluster.name)
-pulumi.export(
-    "kubeconfig",
-    pulumi.Output.secret(
-        azure_native.containerservice.list_managed_cluster_user_credentials_output(
-            resource_group_name=resource_group.name,
-            resource_name=aks_cluster.name,
-        ).kubeconfigs[0].value
-    ),
-)
+pulumi.export("kubeconfig", pulumi.Output.secret(get_kubeconfig_safely()))
 pulumi.export("key_vault_name", kv_name)
 pulumi.export("ssh_public_key_secret", secret_name)
