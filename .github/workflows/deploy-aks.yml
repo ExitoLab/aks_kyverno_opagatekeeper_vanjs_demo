@@ -21,9 +21,10 @@ jobs:
           python-version: "3.11"
 
       - name: Install Pulumi CLI
-        uses: pulumi/actions@v4
-        with:
-          command: version
+        run: |
+          wget https://github.com/pulumi/pulumi/releases/latest/download/pulumi-v3.92.0-linux-x64.tar.gz
+          tar -xzf pulumi-v3.92.0-linux-x64.tar.gz
+          sudo mv pulumi/* /usr/local/bin/
 
       - name: Install dependencies
         run: pip install -r requirements.txt
