@@ -32,27 +32,27 @@ jobs:
       - name: Configure Pulumi
         working-directory: infrastructure
         run: |
-          pulumi stack select ExitoLab/shared-aks/prod --non-interactive || pulumi stack init ExitoLab/shared-aks/prod 
+          pulumi stack select ExitoLab/aks-shared-services/prod --non-interactive || pulumi stack init ExitoLab/aks-shared-services/prod 
         env:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
 
       - name: Pulumi Preview
         working-directory: infrastructure
         run: |
-          pulumi preview --stack ExitoLab/shared-aks/prod --non-interactive
+          pulumi preview --stack ExitoLab/aks-shared-services/prod --non-interactive
         env:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
 
       - name: Pulumi Up
         working-directory: infrastructure
         run: |
-          pulumi up --stack ExitoLab/shared-aks/prod  --yes
+          pulumi up --stack ExitoLab/aks-shared-services/prod  --yes
         env:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
 
       # - name: Pulumi Destroy
       #   working-directory: infrastructure
       #   run: |
-      #     pulumi destroy --stack ExitoLab/shared-aks/prod --yes
+      #     pulumi destroy --stack ExitoLab/aks-shared-services/prod --yes
       #   env:
       #     PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
