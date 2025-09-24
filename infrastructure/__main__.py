@@ -9,60 +9,53 @@ env = config.get("azure:env") or "prod"
 location = config.get("azure:location") or "eastus2"
 name_prefix = f"{project}-{env}"
 
+client_config = azure_native.authorization.get_client_config_output()
+
 # ---------------------------
-# Resource Group safe adoption
+# Resource Group (adopt or create)
 # ---------------------------
 rg_name = f"{name_prefix}-rg"
-client_config = azure_native.authorization.get_client_config()
 
-def get_or_create_rg(name, location):
-    try:
-        # Must use literal subscription ID + RG name
-        return azure_native.resources.ResourceGroup.get(
-            "rg",
-            id=f"/subscriptions/{client_config.subscription_id}/resourceGroups/{name}"
-        )
-    except Exception:
-        return azure_native.resources.ResourceGroup(
-            "rg",
-            resource_group_name=name,
-            location=location
-        )
+rg_check = azure_native.resources.get_resource_group_output(resource_group_name=rg_name)
 
-resource_group = get_or_create_rg(rg_name, location)
+resource_group = pulumi.Output.all(rg_check).apply(
+    lambda args: azure_native.resources.ResourceGroup(
+        "rg",
+        resource_group_name=rg_name,
+        location=location
+    ) if args[0] is None else azure_native.resources.ResourceGroup.get("rg", rg_name)
+)
 
 # ---------------------------
 # Azure Container Registry
 # ---------------------------
 acr_name = f"{name_prefix}acr".lower().replace("-", "").replace("_", "")
 
-try:
-    acr = azure_native.containerregistry.Registry.get(
+acr_check = azure_native.containerregistry.list_registry_credentials_output(
+    resource_group_name=rg_name,
+    registry_name=acr_name
+)
+
+acr = acr_check.apply(
+    lambda exists: azure_native.containerregistry.Registry(
         "acr",
-        id=f"/subscriptions/{client_config.subscription_id}/resourceGroups/{rg_name}/providers/Microsoft.ContainerRegistry/registries/{acr_name}"
-    )
-except Exception:
-    acr = azure_native.containerregistry.Registry(
-        "acr",
-        resource_group_name=resource_group.name,  # safe to use Output
+        resource_group_name=resource_group.name,
         location=location,
         sku=azure_native.containerregistry.SkuArgs(name="Premium"),
         admin_user_enabled=False,
         registry_name=acr_name
-    )
+    ) if exists is None else azure_native.containerregistry.Registry.get("acr", acr_name)
+)
 
 # ---------------------------
 # Key Vault
 # ---------------------------
 kv_name = f"{name_prefix}-kv".lower()[:24]
 
-try:
-    key_vault = azure_native.keyvault.Vault.get(
-        "kv",
-        id=f"/subscriptions/{client_config.subscription_id}/resourceGroups/{rg_name}/providers/Microsoft.KeyVault/vaults/{kv_name}"
-    )
-except Exception:
-    key_vault = azure_native.keyvault.Vault(
+kv_check = azure_native.keyvault.get_vault_output(resource_group_name=rg_name, vault_name=kv_name)
+
+key_vault = kv_check.apply(
+    lambda exists: azure_native.keyvault.Vault(
         "kv",
         resource_group_name=resource_group.name,
         location=location,
@@ -72,7 +65,8 @@ except Exception:
             enable_rbac_authorization=True,
         ),
         vault_name=kv_name
-    )
+    ) if exists is None else azure_native.keyvault.Vault.get("kv", kv_name)
+)
 
 # ---------------------------
 # RSA Key
@@ -88,21 +82,66 @@ public_pem = private_key.public_key().public_bytes(
 # ---------------------------
 secret_name = "aks-ssh-public-key"
 
-try:
-    ssh_secret = azure_native.keyvault.Secret.get(
-        "sshSecret",
-        id=f"/subscriptions/{client_config.subscription_id}/resourceGroups/{rg_name}/providers/Microsoft.KeyVault/vaults/{kv_name}/secrets/{secret_name}"
-    )
-except Exception:
-    ssh_secret = azure_native.keyvault.Secret(
+secret_check = azure_native.keyvault.get_secret_output(vault_name=kv_name, secret_name=secret_name, resource_group_name=rg_name)
+
+ssh_secret = secret_check.apply(
+    lambda exists: azure_native.keyvault.Secret(
         "sshSecret",
         resource_group_name=resource_group.name,
         vault_name=kv_name,
         properties=azure_native.keyvault.SecretPropertiesArgs(value=public_pem),
         secret_name=secret_name
-    )
+    ) if exists is None else azure_native.keyvault.Secret.get("sshSecret", secret_name)
+)
 
+# ---------------------------
+# AKS Cluster
+# ---------------------------
+aks_name = f"{name_prefix}-aks"
+
+aks_check = azure_native.containerservice.get_managed_cluster_output(resource_group_name=rg_name, resource_name=aks_name)
+
+aks_cluster = aks_check.apply(
+    lambda exists: azure_native.containerservice.ManagedCluster(
+        "aks",
+        resource_group_name=resource_group.name,
+        location=location,
+        dns_prefix=f"{name_prefix}-dns",
+        kubernetes_version="1.29.9",
+        enable_rbac=True,
+        identity=azure_native.containerservice.ManagedClusterIdentityArgs(type="SystemAssigned"),
+        agent_pool_profiles=[
+            azure_native.containerservice.ManagedClusterAgentPoolProfileArgs(
+                name="systempool",
+                mode="System",
+                count=1,
+                vm_size="Standard_B2ms",
+                os_type="Linux",
+                os_disk_size_gb=30,
+                type="VirtualMachineScaleSets",
+                enable_auto_scaling=False,
+            ),
+        ],
+        linux_profile=azure_native.containerservice.ContainerServiceLinuxProfileArgs(
+            admin_username="aksadmin",
+            ssh=azure_native.containerservice.ContainerServiceSshConfigurationArgs(
+                public_keys=[azure_native.containerservice.ContainerServiceSshPublicKeyArgs(key_data=public_pem)]
+            )
+        ),
+        network_profile=azure_native.containerservice.ContainerServiceNetworkProfileArgs(
+            network_plugin="azure",
+            load_balancer_sku="standard",
+            outbound_type="loadBalancer",
+        ),
+        resource_name=aks_name,
+    ) if exists is None else azure_native.containerservice.ManagedCluster.get("aks", aks_name)
+)
+
+# ---------------------------
+# Exports
+# ---------------------------
 pulumi.export("resource_group", resource_group.name)
 pulumi.export("acr_name", acr_name)
 pulumi.export("key_vault_name", kv_name)
 pulumi.export("ssh_public_key_secret", secret_name)
+pulumi.export("aks_name", aks_cluster.name)
