@@ -12,7 +12,7 @@ name_prefix = f"{project}-{env}"
 client_config = azure_native.authorization.get_client_config_output()
 
 # ---------------------------
-# Resource Group (always create, Pulumi will adopt if exists)
+# Resource Group
 # ---------------------------
 rg_name = f"{name_prefix}-rg"
 resource_group = azure_native.resources.ResourceGroup(
@@ -60,15 +60,16 @@ public_pem = private_key.public_key().public_bytes(
 ).decode()
 
 # ---------------------------
-# Key Vault Secret
+# Key Vault Secret (depends on vault)
 # ---------------------------
 secret_name = "aks-ssh-public-key"
 ssh_secret = azure_native.keyvault.Secret(
     "sshSecret",
     resource_group_name=resource_group.name,
-    vault_name=kv_name,
+    vault_name=key_vault.name,  # depend on vault output
     properties=azure_native.keyvault.SecretPropertiesArgs(value=public_pem),
-    secret_name=secret_name
+    secret_name=secret_name,
+    opts=pulumi.ResourceOptions(depends_on=[key_vault])  # ensure vault exists first
 )
 
 # ---------------------------
@@ -76,7 +77,7 @@ ssh_secret = azure_native.keyvault.Secret(
 # ---------------------------
 aks_name = f"{name_prefix}-aks"
 aks_cluster = azure_native.containerservice.ManagedCluster(
-    "aks",  # Pulumi logical name
+    "aks",
     resource_group_name=resource_group.name,
     location=location,
     dns_prefix=f"{name_prefix}-dns",
