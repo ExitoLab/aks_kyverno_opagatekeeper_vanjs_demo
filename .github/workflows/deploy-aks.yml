@@ -13,7 +13,7 @@ jobs:
 
     steps:
       - name: Checkout Repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -21,9 +21,9 @@ jobs:
           python-version: "3.11"
 
       - name: Install Pulumi CLI
-        uses: pulumi/setup-pulumi@v3
+        uses: pulumi/actions@v4
         with:
-          pulumi-version: "latest"
+          command: version
 
       - name: Install dependencies
         run: pip install -r requirements.txt
@@ -35,31 +35,31 @@ jobs:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Pulumi Preview
-        uses: pulumi/actions@v5
+        uses: pulumi/actions@v4
         with:
           command: preview
-          stack-name: shared-eks/prod
+          stack-name: shared-aks/prod
           work-dir: infrastructure
         env:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
 
       - name: Pulumi Up
-        uses: pulumi/actions@v5
+        uses: pulumi/actions@v4
         with:
           command: up
-          stack-name: shared-eks/prod
+          stack-name: shared-aks/prod
           work-dir: infrastructure
           args: --yes
         env:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
 
-
-      - name: Pulumi Destroy
-        uses: pulumi/actions@v5
-        with:
-          command: destroy
-          stack-name: shared-eks/prod
-          work-dir: infrastructure
-          args: --yes
-        env:
-          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+      # Uncomment the destroy step only if you actually want to destroy resources
+      # - name: Pulumi Destroy
+      #   uses: pulumi/actions@v4
+      #   with:
+      #     command: destroy
+      #     stack-name: shared-aks/prod
+      #     work-dir: infrastructure
+      #     args: --yes
+      #   env:
+      #     PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
