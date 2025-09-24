@@ -71,19 +71,26 @@ ssh_secret = azure_native.keyvault.Secret(
     opts=pulumi.ResourceOptions(depends_on=[key_vault])
 )
 
+# ---------------------------
 # AKS Cluster
-aks_name = f"{name_prefix}-aks"
+# ---------------------------
+aks_name = f"{name_prefix}-aks"  # e.g., "aks-shared-services-prod-aks"
 
 def create_or_get_aks(rg_name, aks_name):
+    """
+    Try to get an existing AKS cluster by name. If not found, create it.
+    """
     try:
         return azure_native.containerservice.get_managed_cluster_output(
             resource_group_name=rg_name,
             resource_name=aks_name
         )
-    except:
+    except Exception:
+        # If not found, create the cluster
         return azure_native.containerservice.ManagedCluster(
             "aks",
             resource_group_name=rg_name,
+            resource_name=aks_name,  # Explicit Azure AKS cluster name
             location=location,
             dns_prefix=f"{name_prefix}-dns",
             kubernetes_version="1.33.3",
