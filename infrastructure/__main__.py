@@ -86,43 +86,56 @@ ssh_secret = key_vault.apply(lambda kv: azure_native.keyvault.Secret(
 ))
 
 # ---------------------------
-# AKS Cluster
+# AKS Cluster (create only if not exists)
 # ---------------------------
 aks_name = f"{name_prefix}-aks"
-aks_cluster = azure_native.containerservice.ManagedCluster(
-    "aks",
-    resource_group_name=resource_group.name,
-    location=location,
-    dns_prefix=f"{name_prefix}-dns",
-    kubernetes_version="1.33.3",
-    enable_rbac=True,
-    identity=azure_native.containerservice.ManagedClusterIdentityArgs(
-        type="SystemAssigned"
-    ),
-    agent_pool_profiles=[
-        azure_native.containerservice.ManagedClusterAgentPoolProfileArgs(
-            name="systempool",
-            mode="System",
-            count=1,
-            vm_size="Standard_B2ms",
-            os_type="Linux",
-            os_disk_size_gb=30,
-            type="VirtualMachineScaleSets",
-            enable_auto_scaling=False,
-        ),
-    ],
-    linux_profile=azure_native.containerservice.ContainerServiceLinuxProfileArgs(
-        admin_username="aksadmin",
-        ssh=azure_native.containerservice.ContainerServiceSshConfigurationArgs(
-            public_keys=[azure_native.containerservice.ContainerServiceSshPublicKeyArgs(key_data=public_pem)]
+
+def create_or_get_aks(args):
+    rg_name, aks_name = args
+    try:
+        # Try to get existing AKS cluster
+        return azure_native.containerservice.get_managed_cluster_output(
+            resource_group_name=rg_name,
+            resource_name=aks_name
         )
-    ),
-    network_profile=azure_native.containerservice.ContainerServiceNetworkProfileArgs(
-        network_plugin="azure",
-        load_balancer_sku="standard",
-        outbound_type="loadBalancer",
-    ),
-)
+    except Exception:
+        # Cluster doesn't exist, create a new one
+        return azure_native.containerservice.ManagedCluster(
+            "aks",
+            resource_group_name=rg_name,
+            location=location,
+            dns_prefix=f"{name_prefix}-dns",
+            kubernetes_version="1.33.3",
+            enable_rbac=True,
+            identity=azure_native.containerservice.ManagedClusterIdentityArgs(
+                type="SystemAssigned"
+            ),
+            agent_pool_profiles=[
+                azure_native.containerservice.ManagedClusterAgentPoolProfileArgs(
+                    name="systempool",
+                    mode="System",
+                    count=1,
+                    vm_size="Standard_B2ms",
+                    os_type="Linux",
+                    os_disk_size_gb=30,
+                    type="VirtualMachineScaleSets",
+                    enable_auto_scaling=False,
+                ),
+            ],
+            linux_profile=azure_native.containerservice.ContainerServiceLinuxProfileArgs(
+                admin_username="aksadmin",
+                ssh=azure_native.containerservice.ContainerServiceSshConfigurationArgs(
+                    public_keys=[azure_native.containerservice.ContainerServiceSshPublicKeyArgs(key_data=public_pem)]
+                )
+            ),
+            network_profile=azure_native.containerservice.ContainerServiceNetworkProfileArgs(
+                network_plugin="azure",
+                load_balancer_sku="standard",
+                outbound_type="loadBalancer",
+            ),
+        )
+
+aks_cluster = Output.all(resource_group.name, aks_name).apply(create_or_get_aks)
 
 # ---------------------------
 # Exports
