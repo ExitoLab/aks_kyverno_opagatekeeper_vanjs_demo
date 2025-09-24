@@ -62,12 +62,10 @@ ssh_secret = azure_native.keyvault.Secret(
     opts=pulumi.ResourceOptions(depends_on=[key_vault])
 )
 
-# AKS Cluster — fixed Azure name
-aks_name = f"{name_prefix}-aks"
 aks_cluster = azure_native.containerservice.ManagedCluster(
-    "aks",
+    "aks",  # Pulumi logical name
     resource_group_name=resource_group.name,
-    resource_name=aks_name,  # Azure-visible name
+    name=aks_name,  # Azure-visible name
     location=location,
     dns_prefix=f"{name_prefix}-dns",
     kubernetes_version="1.33.3",
