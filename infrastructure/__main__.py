@@ -1,5 +1,4 @@
 import pulumi
-import pulumi_random as random
 import pulumi_azure_native as azure_native
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -20,54 +19,68 @@ name_prefix = f"{project}-{env}"
 # ---------------------------
 rg_name = f"{name_prefix}-rg"
 
-try:
-    resource_group = azure_native.resources.ResourceGroup.get("rg", rg_name)
-except Exception:
-    resource_group = azure_native.resources.ResourceGroup(
-        "rg",
-        resource_group_name=rg_name,
-        location=location,
-    )
+def get_or_create_rg(name, location):
+    """Adopt existing RG or create new one."""
+    try:
+        # Attempt to adopt the existing resource group
+        return azure_native.resources.ResourceGroup.get("rg", name)
+    except Exception:
+        # If it doesn't exist, create it
+        return azure_native.resources.ResourceGroup(
+            "rg",
+            resource_group_name=name,
+            location=location,
+        )
+
+resource_group = get_or_create_rg(rg_name, location)
 
 # ---------------------------
-# Azure Container Registry (safe adoption)
+# Azure Container Registry
 # ---------------------------
 acr_name = f"{name_prefix}acr".lower().replace("-", "").replace("_", "")
 
-try:
-    acr = azure_native.containerregistry.Registry.get("acr", acr_name)
-except Exception:
-    acr = azure_native.containerregistry.Registry(
-        "acr",
-        resource_group_name=rg_name,      # FIXED: Use string variable
-        location=location,                # FIXED: Use string variable
-        sku=azure_native.containerregistry.SkuArgs(name="Premium"),
-        admin_user_enabled=False,
-        registry_name=acr_name,
-    )
+def get_or_create_acr(name, rg_name, location):
+    try:
+        return azure_native.containerregistry.Registry.get("acr", name)
+    except Exception:
+        return azure_native.containerregistry.Registry(
+            "acr",
+            resource_group_name=rg_name,
+            location=location,
+            sku=azure_native.containerregistry.SkuArgs(name="Premium"),
+            admin_user_enabled=False,
+            registry_name=name,
+        )
+
+acr = get_or_create_acr(acr_name, resource_group.name, location)
 
 # ---------------------------
-# Key Vault (safe adoption)
+# Key Vault
 # ---------------------------
 client_config = azure_native.authorization.get_client_config_output()
 kv_name = f"{name_prefix}-kv".lower().replace("_", "")[:24]
 
-try:
-    key_vault = azure_native.keyvault.Vault.get("kv", kv_name)
-except Exception:
-    key_vault = azure_native.keyvault.Vault(
-        "kv",
-        resource_group_name=rg_name,     # FIXED: Use string variable
-        location=location,
-        properties=azure_native.keyvault.VaultPropertiesArgs(
-            sku=azure_native.keyvault.SkuArgs(family="A", name="standard"),
-            tenant_id=client_config.tenant_id,
-            enable_rbac_authorization=True,
-        ),
-        vault_name=kv_name,
-    )
+def get_or_create_kv(name, rg_name, location, tenant_id):
+    try:
+        return azure_native.keyvault.Vault.get("kv", name)
+    except Exception:
+        return azure_native.keyvault.Vault(
+            "kv",
+            resource_group_name=rg_name,
+            location=location,
+            properties=azure_native.keyvault.VaultPropertiesArgs(
+                sku=azure_native.keyvault.SkuArgs(family="A", name="standard"),
+                tenant_id=tenant_id,
+                enable_rbac_authorization=True,
+            ),
+            vault_name=name,
+        )
 
+key_vault = get_or_create_kv(kv_name, resource_group.name, location, client_config.tenant_id)
+
+# ---------------------------
 # Generate RSA key
+# ---------------------------
 private_key = rsa.generate_private_key(
     public_exponent=65537,
     key_size=4096
@@ -85,25 +98,28 @@ public_pem = private_key.public_key().public_bytes(
 ).decode()
 
 # ---------------------------
-# Key Vault secrets (safe adoption)
+# Key Vault Secret
 # ---------------------------
 secret_name = "aks-ssh-public-key"
 
-try:
-    ssh_public_key_secret = azure_native.keyvault.Secret.get(
-        "sshPublicKeySecretVault",
-        f"{kv_name}/{secret_name}"
-    )
-except Exception:
-    ssh_public_key_secret = azure_native.keyvault.Secret(
-        "sshPublicKeySecretVault",
-        resource_group_name=rg_name,
-        vault_name=kv_name,
-        properties=azure_native.keyvault.SecretPropertiesArgs(
-            value=public_pem,
-        ),
-        secret_name=secret_name,
-    )
+def get_or_create_secret(kv_name, rg_name, secret_name, public_pem):
+    try:
+        return azure_native.keyvault.Secret.get(
+            "sshPublicKeySecretVault",
+            f"{kv_name}/{secret_name}"
+        )
+    except Exception:
+        return azure_native.keyvault.Secret(
+            "sshPublicKeySecretVault",
+            resource_group_name=rg_name,
+            vault_name=kv_name,
+            properties=azure_native.keyvault.SecretPropertiesArgs(
+                value=public_pem,
+            ),
+            secret_name=secret_name,
+        )
+
+ssh_public_key_secret = get_or_create_secret(kv_name, resource_group.name, secret_name, public_pem)
 
 # ---------------------------
 # AKS Cluster
@@ -117,7 +133,7 @@ except Exception:
     print(f"Creating new AKS cluster: {aks_name}")
     aks_cluster = azure_native.containerservice.ManagedCluster(
         "aks",
-        resource_group_name=rg_name,
+        resource_group_name=resource_group.name,
         location=location,
         dns_prefix=f"{name_prefix}-dns",
         kubernetes_version="1.33.2",
@@ -136,7 +152,6 @@ except Exception:
                 vm_size="Standard_B2ms",
                 os_type="Linux",
                 os_disk_size_gb=30,
-                #availability_zones=["1"],             # Demo: Single zone only
                 type="VirtualMachineScaleSets",
                 enable_auto_scaling=False,
             ),
@@ -166,12 +181,12 @@ except Exception:
             load_balancer_sku="standard",
             outbound_type="loadBalancer",
         ),
-        resource_name=aks_name,  # Explicitly set the AKS cluster name
+        resource_name=aks_name,
     )
 
-# --------------------------------
-# Role Assignment: AKS → ACR Pull 
-# --------------------------------
+# ---------------------------
+# Role Assignment: AKS → ACR Pull
+# ---------------------------
 def create_role_assignment(principal_id):
     if principal_id is not None:
         return azure_native.authorization.RoleAssignment(
@@ -183,7 +198,7 @@ def create_role_assignment(principal_id):
             ),
             scope=pulumi.Output.concat(
                 "/subscriptions/", client_config.subscription_id,
-                "/resourceGroups/", rg_name,
+                "/resourceGroups/", resource_group.name,
                 "/providers/Microsoft.ContainerRegistry/registries/", acr_name
             ),
         )
@@ -191,21 +206,20 @@ def create_role_assignment(principal_id):
         pulumi.log.warn("AKS cluster has no identity; skipping RoleAssignment")
         return None
 
-# Apply safe RoleAssignment
 aks_cluster_identity = aks_cluster.identity.apply(lambda id: id.principal_id if id is not None else None)
 role_assignment = aks_cluster_identity.apply(create_role_assignment)
 
 # ---------------------------
 # Exports
 # ---------------------------
-pulumi.export("resource_group", rg_name)
+pulumi.export("resource_group", resource_group.name)
 pulumi.export("acr_name", acr_name)
 pulumi.export("aks_name", aks_cluster.name)
 pulumi.export(
     "kubeconfig",
     pulumi.Output.secret(
         azure_native.containerservice.list_managed_cluster_user_credentials_output(
-            resource_group_name=rg_name,
+            resource_group_name=resource_group.name,
             resource_name=aks_cluster.name,
         ).kubeconfigs[0].value
     ),
