@@ -24,21 +24,16 @@ jobs:
         run: pip install -r requirements.txt
         working-directory: infrastructure
 
-      - name: Azure Login
-        uses: azure/login@v1
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-
       - name: Configure Pulumi
         working-directory: infrastructure
         run: |
           pulumi stack select ExitoLab/aks-shared-services/prod --non-interactive || pulumi stack init ExitoLab/aks-shared-services/prod 
         env:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CREDENTIALS_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CREDENTIALS_CLIENT_SECRET }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_CREDENTIALS_TENANT_ID }}
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_CREDENTIALS_SUBSCRIPTION_ID }}
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CREDENTIALS_CLIENT_ID }}
+          ARM_CLIENT_SECRET: ${{ secrets.AZURE_CREDENTIALS_CLIENT_SECRET }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_CREDENTIALS_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_CREDENTIALS_SUBSCRIPTION_ID }}
 
       - name: Pulumi Preview
         working-directory: infrastructure
@@ -46,10 +41,10 @@ jobs:
           pulumi preview --stack ExitoLab/aks-shared-services/prod --non-interactive
         env:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CREDENTIALS_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CREDENTIALS_CLIENT_SECRET }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_CREDENTIALS_TENANT_ID }}
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_CREDENTIALS_SUBSCRIPTION_ID }}
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CREDENTIALS_CLIENT_ID }}
+          ARM_CLIENT_SECRET: ${{ secrets.AZURE_CREDENTIALS_CLIENT_SECRET }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_CREDENTIALS_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_CREDENTIALS_SUBSCRIPTION_ID }}
 
       - name: Pulumi Up
         working-directory: infrastructure
@@ -57,10 +52,10 @@ jobs:
           pulumi up --stack ExitoLab/aks-shared-services/prod  --yes
         env:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CREDENTIALS_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CREDENTIALS_CLIENT_SECRET }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_CREDENTIALS_TENANT_ID }}
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_CREDENTIALS_SUBSCRIPTION_ID }}
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CREDENTIALS_CLIENT_ID }}
+          ARM_CLIENT_SECRET: ${{ secrets.AZURE_CREDENTIALS_CLIENT_SECRET }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_CREDENTIALS_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_CREDENTIALS_SUBSCRIPTION_ID }}
 
       # - name: Pulumi Destroy
       #   working-directory: infrastructure
