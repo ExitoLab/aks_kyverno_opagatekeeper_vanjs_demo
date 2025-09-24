@@ -76,13 +76,15 @@ ssh_secret = azure_native.keyvault.Secret(
 # ---------------------------
 aks_name = f"{name_prefix}-aks"
 aks_cluster = azure_native.containerservice.ManagedCluster(
-    "aks",
+    "aks",  # Pulumi logical name
     resource_group_name=resource_group.name,
     location=location,
     dns_prefix=f"{name_prefix}-dns",
-    kubernetes_version="1.33.3",
+    kubernetes_version="1.29.9",
     enable_rbac=True,
-    identity=azure_native.containerservice.ManagedClusterIdentityArgs(type="SystemAssigned"),
+    identity=azure_native.containerservice.ManagedClusterIdentityArgs(
+        type="SystemAssigned"
+    ),
     agent_pool_profiles=[
         azure_native.containerservice.ManagedClusterAgentPoolProfileArgs(
             name="systempool",
@@ -106,7 +108,6 @@ aks_cluster = azure_native.containerservice.ManagedCluster(
         load_balancer_sku="standard",
         outbound_type="loadBalancer",
     ),
-    resource_name=aks_name,
 )
 
 # ---------------------------
